@@ -24,9 +24,9 @@ datasets:
                 mean: [0.485, 0.456, 0.406]
                 std: [0.229, 0.224, 0.225]
       val:
-        dataset_id: &imagenet_val !join [ *dataset_name, '/val' ]
+        dataset_id: &imagenet_val !join [*dataset_name, '/val']
         params:
-          root: !join [ *root_dir, '/val' ]
+          root: !join [*root_dir, '/val']
           transform_params:
             - type: 'Resize'
               params:
@@ -47,12 +47,13 @@ models:
     ckpt: !join ['./resource/ilsvrc2012/teacher/', 'Resnet34', '.pt']
 
   student_model:
-    name: &student_model_name 'resnet18'
+    key: &student_model_name 'resnet18'
     params:
       num_classes: 8
       pretrained: False
     experiment: &student_experiment !join [*dataset_name, '-', *student_model_name, '_from_', *teacher_model_name]
-    ckpt: !join ['./resource/ckpt/ilsvrc2012/multi_stage/fsp/', *student_experiment, '.pt']
+#    ckpt: !join ['./resource/ckpt/ilsvrc2012/multi_stage/fsp/', *student_experiment, '.pt']
+    ckpt: !join ['./resource/ilsvrc2012/student/fsp/', *student_experiment, '.pt']
 
 train:
   log_freq: 1000

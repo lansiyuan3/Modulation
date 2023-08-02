@@ -1,8 +1,9 @@
 import torch
+from torch.utils.data import DataLoader
 from torch import distributed as dist
 from torch import nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau, LambdaLR
-
+from ..datasets.registry import trian_dataset
 from torchdistill.common.constant import def_logger
 from torchdistill.common.module_util import check_if_wrapped, freeze_module_params, get_module, \
     unfreeze_module_params, get_updatable_param_names
@@ -33,6 +34,21 @@ class TrainingBox(nn.Module):
             self.train_data_loader = train_data_loader
         if val_data_loader is not None:
             self.val_data_loader = val_data_loader
+
+    # 创建自己的数据集
+    def setup_data_my_loaders(self, train_config):
+        train_data_loader_config = train_config.get('train_data_loader', dict())
+        if 'requires_supp' not in train_data_loader_config:
+            train_data_loader_config['requires_supp'] = True
+
+        val_data_loader_config = train_config.get('val_data_loader', dict())
+        data_tarin = trian_dataset(data_dir='train')
+        train_iter = DataLoader(dataset=data_tarin, batch_size=128, shuffle=True)
+        data_valid = trian_dataset(data_dir='valid')
+        valid_iter = DataLoader(dataset=data_valid, batch_size=128, shuffle=True)
+
+        self.train_data_loader = train_iter
+        self.val_data_loader = valid_iter
 
     def setup_model(self, model_config):
         unwrapped_org_model = \
@@ -69,6 +85,7 @@ class TrainingBox(nn.Module):
     def setup(self, train_config):
         # Set up train and val data loaders
         self.setup_data_loaders(train_config)
+        self.setup_data_my_loaders()
 
         # Define model used in this stage
         model_config = train_config.get('model', dict())

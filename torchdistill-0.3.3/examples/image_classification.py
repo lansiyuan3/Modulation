@@ -25,8 +25,8 @@ logger = def_logger.getChild(__name__)
 
 def get_argparser():
     parser = argparse.ArgumentParser(description='Knowledge distillation for image classification models')
-    parser.add_argument('--config', default=r'D:\torchdistill-0.3.3\torchdistill-0.3.3\configs\sample\ilsvrc2012'
-                                            r'\multi_stage\fsp\resnet18_from_resnet34.yaml',
+    parser.add_argument('--config', default=r"D:\torchdistill-0.3.3\torchdistill-0.3.3\configs\sample\ilsvrc2012"
+                                            r"\multi_stage\fsp\resnet18_from_resnet34.yaml",
                         help='yaml file path')
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('--log', help='log file path')
@@ -149,7 +149,7 @@ def train(teacher_model, student_model, dataset_dict, ckpt_file_path, device, de
             best_val_top1_accuracy = val_top1_accuracy
             save_ckpt(student_model_without_ddp, optimizer, lr_scheduler,
                       best_val_top1_accuracy, args, ckpt_file_path)
-        training_box.post_epoch_process()
+        training_box.post_process()
     if distributed:
         dist.barrier()
 
