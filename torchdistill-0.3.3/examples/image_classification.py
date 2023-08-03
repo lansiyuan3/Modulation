@@ -17,8 +17,6 @@ from torchdistill.core.distillation import get_distillation_box
 from torchdistill.core.training import get_training_box
 from torchdistill.datasets import util
 from torchdistill.misc.log import setup_log_file, SmoothedValue, MetricLogger
-from torchdistill.models.official import get_image_classification_model
-from torchdistill.models.registry import get_model
 
 logger = def_logger.getChild(__name__)
 
