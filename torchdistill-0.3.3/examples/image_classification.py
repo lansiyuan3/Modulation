@@ -4,7 +4,6 @@ import os
 import time
 
 import torch
-import torchvision.models
 from torch import distributed as dist
 from torch.backends import cudnn
 from torch.nn import DataParallel
@@ -16,6 +15,7 @@ from torchdistill.common.main_util import is_main_process, init_distributed_mode
 from torchdistill.core.distillation import get_distillation_box
 from torchdistill.core.training import get_training_box
 from torchdistill.datasets import util
+from torchdistill.eval.classification import compute_accuracy
 from torchdistill.misc.log import setup_log_file, SmoothedValue, MetricLogger
 from torchdistill.models.official import get_image_classification_model
 from torchdistill.models.registry import get_model
@@ -25,14 +25,11 @@ logger = def_logger.getChild(__name__)
 
 def get_argparser():
     parser = argparse.ArgumentParser(description='Knowledge distillation for image classification models')
-    parser.add_argument('--config', default=r"D:\torchdistill-0.3.3\torchdistill-0.3.3\configs\sample\cifar10\kd"
-                                            r"\resnet20_from_densenet_bc_k12_depth100-final_run.yaml",
-                        help='yaml file path')
+    parser.add_argument('--config', required=True, help='yaml file path')
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('--log', help='log file path')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='start epoch')
     parser.add_argument('--seed', type=int, help='seed in random number generator')
-    parser.add_argument('-disable_cudnn_benchmark', action='store_true', help='disable torch.backend.cudnn.benchmark')
     parser.add_argument('-test_only', action='store_true', help='only test the models')
     parser.add_argument('-student_only', action='store_true', help='test the student model only')
     parser.add_argument('-log_config', action='store_true', help='log config')
@@ -44,29 +41,14 @@ def get_argparser():
     return parser
 
 
-def compute_accuracy(outputs, targets, topk=(1,)):
-    """Computes the accuracy over the k top predictions for the specified values of k"""
-    with torch.no_grad():
-        maxk = max(topk)
-        batch_size = targets.size(0)
-        _, preds = outputs.topk(maxk, 1, True, True)
-        preds = preds.t()
-        corrects = preds.eq(targets[None])
-        result_list = []
-        for k in topk:
-            correct_k = corrects[:k].flatten().sum(dtype=torch.float32)
-            result_list.append(correct_k * (100.0 / batch_size))
-        return result_list
-
-
 def load_model(model_config, device, distributed):
-    # 创建本地模型，暂时忽略这段代码，因为这个加载在线模型用的
     model = get_image_classification_model(model_config, distributed)
     if model is None:
         repo_or_dir = model_config.get('repo_or_dir', None)
         model = get_model(model_config['name'], repo_or_dir, **model_config['params'])
+
     ckpt_file_path = model_config['ckpt']
-    load_ckpt(ckpt_file_path, model=None, strict=True)
+    load_ckpt(ckpt_file_path, model=model, strict=True)
     return model.to(device)
 
 
@@ -134,7 +116,6 @@ def train(teacher_model, student_model, dataset_dict, ckpt_file_path, device, de
         best_val_top1_accuracy, _, _ = load_ckpt(ckpt_file_path, optimizer=optimizer, lr_scheduler=lr_scheduler)
 
     log_freq = train_config['log_freq']
-    # 判断语句直接进入student_model
     student_model_without_ddp = student_model.module if module_util.check_if_wrapped(student_model) else student_model
     start_time = time.time()
     for epoch in range(args.start_epoch, training_box.num_epochs):
@@ -147,8 +128,9 @@ def train(teacher_model, student_model, dataset_dict, ckpt_file_path, device, de
             logger.info('Updating ckpt at {}'.format(ckpt_file_path))
             best_val_top1_accuracy = val_top1_accuracy
             save_ckpt(student_model_without_ddp, optimizer, lr_scheduler,
-                      best_val_top1_accuracy, args, ckpt_file_path)
+                      best_val_top1_accuracy, config, args, ckpt_file_path)
         training_box.post_process()
+
     if distributed:
         dist.barrier()
 
@@ -162,36 +144,28 @@ def main(args):
     log_file_path = args.log
     if is_main_process() and log_file_path is not None:
         setup_log_file(os.path.expanduser(log_file_path))
-    distributed,  device_ids, = init_distributed_mode(args.world_size, args.dist_url)
+
+    distributed, device_ids = init_distributed_mode(args.world_size, args.dist_url)
     logger.info(args)
     cudnn.benchmark = True
     set_seed(args.seed)
-    # config是加载yaml文件，yaml文件加载
     config = yaml_util.load_yaml_file(os.path.expanduser(args.config))
     device = torch.device(args.device)
-    dataset_dict = config['datasets']
+    dataset_dict = util.get_all_datasets(config['datasets'])
     models_config = config['models']
     teacher_model_config = models_config.get('teacher_model', None)
-    teacher_model = load_model(teacher_model_config, device, distributed) if teacher_model_config is not None else None
-    student_model_config = models_config['student_model'] if 'student_model' in models_config else models_config[
-        'model']
+    teacher_model =\
+        load_model(teacher_model_config, device, distributed) if teacher_model_config is not None else None
+    student_model_config =\
+        models_config['student_model'] if 'student_model' in models_config else models_config['model']
     ckpt_file_path = student_model_config['ckpt']
-
-    # teacher_model = torch.load('path/to/model.pt')
-    # num_ftrs_T = teacher_model.fc.in_features
-    # teacher_model.fc = torch.nn.Linear(num_ftrs_T, 8)
-
-    # 知识蒸馏加载学生模型
-    student_model = torchvision.models.resnet18(pretrained=False)
-    num_ftr_S = student_model.fc.in_features
-    student_model.fc = torch.nn.Linear(num_ftr_S, 8)
-
+    student_model = load_model(student_model_config, device, distributed)
     if args.log_config:
         logger.info(config)
 
     if not args.test_only:
         train(teacher_model, student_model, dataset_dict, ckpt_file_path, device, device_ids, distributed, config, args)
-        student_model_without_ddp = \
+        student_model_without_ddp =\
             student_model.module if module_util.check_if_wrapped(student_model) else student_model
         load_ckpt(student_model_config['ckpt'], model=student_model_without_ddp, strict=True)
 
