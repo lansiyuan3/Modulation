@@ -17,14 +17,16 @@ from torchdistill.core.distillation import get_distillation_box
 from torchdistill.core.training import get_training_box
 from torchdistill.datasets import util
 from torchdistill.misc.log import setup_log_file, SmoothedValue, MetricLogger
+from torchdistill.models.official import get_image_classification_model
+from torchdistill.models.registry import get_model
 
 logger = def_logger.getChild(__name__)
 
 
 def get_argparser():
     parser = argparse.ArgumentParser(description='Knowledge distillation for image classification models')
-    parser.add_argument('--config', default=r"D:\torchdistill-0.3.3\torchdistill-0.3.3\configs\sample\ilsvrc2012"
-                                            r"\multi_stage\fsp\resnet18_from_resnet34.yaml",
+    parser.add_argument('--config', default=r"D:\torchdistill-0.3.3\torchdistill-0.3.3\configs\sample\cifar10\kd"
+                                            r"\resnet20_from_densenet_bc_k12_depth100-final_run.yaml",
                         help='yaml file path')
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('--log', help='log file path')
@@ -58,14 +60,13 @@ def compute_accuracy(outputs, targets, topk=(1,)):
 
 
 def load_model(model_config, device, distributed):
-    #创建本地模型，暂时忽略这段代码，因为这个加载在线模型用的
-    # model = get_image_classification_model(model_config, distributed)
-    # if model is None:
-    #     repo_or_dir = model_config.get('repo_or_dir', None)
-    #     model = get_model(model_config['name'], repo_or_dir, **model_config['params'])
-    #
+    # 创建本地模型，暂时忽略这段代码，因为这个加载在线模型用的
+    model = get_image_classification_model(model_config, distributed)
+    if model is None:
+        repo_or_dir = model_config.get('repo_or_dir', None)
+        model = get_model(model_config['name'], repo_or_dir, **model_config['params'])
     ckpt_file_path = model_config['ckpt']
-    model = load_ckpt(ckpt_file_path, model=None, strict=True)
+    load_ckpt(ckpt_file_path, model=None, strict=True)
     return model.to(device)
 
 
@@ -129,8 +130,8 @@ def train(teacher_model, student_model, dataset_dict, ckpt_file_path, device, de
                                   device, device_ids, distributed, lr_factor)
     best_val_top1_accuracy = 0.0
     optimizer, lr_scheduler = training_box.optimizer, training_box.lr_scheduler
-    # if file_util.check_if_exists(ckpt_file_path):
-    #     best_val_top1_accuracy, _, _ = load_ckpt(ckpt_file_path, optimizer=optimizer, lr_scheduler=lr_scheduler)
+    if file_util.check_if_exists(ckpt_file_path):
+        best_val_top1_accuracy, _, _ = load_ckpt(ckpt_file_path, optimizer=optimizer, lr_scheduler=lr_scheduler)
 
     log_freq = train_config['log_freq']
     # 判断语句直接进入student_model
