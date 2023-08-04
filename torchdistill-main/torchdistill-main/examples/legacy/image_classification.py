@@ -26,8 +26,9 @@ logger = def_logger.getChild(__name__)
 
 def get_argparser():
     parser = argparse.ArgumentParser(description='Knowledge distillation for image classification models')
-    parser.add_argument('--config', default=r"D:\torchdistill-0.3.3\torchdistill-main\torchdistill-main\configs"
-                                            r"\legacy\sample\ilsvrc2012\multi_stage\fsp\resnet18_from_resnet34.yaml"
+    parser.add_argument('--config', default=r"D:\Users\Miclan\torchdistill-0.3.3\torchdistill-main\torchdistill-main"
+                                            r"\configs\legacy\sample\ilsvrc2012\multi_stage\fsp"
+                                            r"\resnet18_from_resnet34.yaml "
                         ,help='yaml file path')
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('--log', help='log file path')
@@ -167,8 +168,7 @@ def main(args):
 
     # 加载ResNet18模型
     student_model  = torchvision.models.resnet18(pretrained=True)
-    num_ftrs = student_model .fc.in_features
-    student_model .fc = nn.Linear(num_ftrs, 8)
+    student_model .fc = nn.Linear(512, 8)
 
     if args.log_config:
         logger.info(config)
