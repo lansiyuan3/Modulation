@@ -1,0 +1,224 @@
+dependencies:
+  - name: 'custom'
+
+datasets:
+  &coco_train_dataset_id coco2017/train: &coco_train_dataset !import_call
+    _name: &dataset_name 'coco2017'
+    _root: &root_dir !join ['~/datasets/', *dataset_name]
+    key: 'coco.dataset.coco_dataset'
+    init:
+      kwargs:
+        img_dir_path: !join [*root_dir, '/train2017']
+        ann_file_path: !join [*root_dir, '/annotations/instances_train2017.json']
+        annotated_only: True
+        random_horizontal_flip: 0.5
+        is_segment: False
+  &coco_val_dataset_id coco2017/val: !import_call
+    key: 'coco.dataset.coco_dataset'
+    init:
+      kwargs:
+        img_dir_path: !join [*root_dir, '/val2017']
+        ann_file_path: !join [*root_dir, '/annotations/instances_val2017.json']
+        annotated_only: False
+        is_segment: False
+
+models:
+  teacher_model:
+    key: &teacher_model_key 'fasterrcnn_resnet50_fpn'
+    _weights: &teacher_weights !import_get
+      key: 'torchvision.models.detection.faster_rcnn.FasterRCNN_ResNet50_FPN_Weights'
+    kwargs:
+      weights: !getattr [*teacher_weights, 'COCO_V1']
+      progress: True
+      num_classes: 91
+  student_model:
+    key: &student_model_key 'custom_fasterrcnn_resnet_fpn'
+    _weights: &student_backbone_weights !import_get
+      key: 'torchvision.models.resnet.ResNet18_Weights'
+    kwargs:
+      num_classes: 91
+      backbone:
+        key: 'resnet18'
+        kwargs:
+          num_classes: 1000
+          weights: !getattr [*student_backbone_weights, 'IMAGENET1K_V1']
+          trainable_backbone_layers: 3
+    _experiment: &student_experiment !join [*dataset_name, '-', *student_model_key, '_from_', *teacher_model_key]
+    src_ckpt:
+    dst_ckpt: !join ['./resource/ckpt/coco2017/multi_stage/ft/', *student_experiment, '.pt']
+
+train:
+  log_freq: 1000
+  stage1:
+    num_epochs: 1
+    train_data_loader:
+      dataset_id: *coco_train_dataset_id
+      sampler:
+        class_or_func: !import_get
+          key: 'torch.utils.data.RandomSampler'
+        kwargs:
+      batch_sampler:
+        key: 'GroupedBatchSampler'
+        kwargs:
+          batch_size: 4
+          group_ids: !import_call
+            key: 'custom.sampler.create_aspect_ratio_groups'
+            init:
+              kwargs:
+                dataset: *coco_train_dataset
+                aspect_ratio_group_factor: 3
+      collate_fn: 'coco_collate_fn'
+      kwargs:
+        num_workers: 4
+      cache_output:
+    val_data_loader:
+      dataset_id: *coco_val_dataset_id
+      sampler: &val_sampler
+        class_or_func: !import_get
+          key: 'torch.utils.data.SequentialSampler'
+        kwargs:
+      collate_fn: 'coco_collate_fn'
+      kwargs:
+        batch_size: 1
+        num_workers: 4
+    teacher:
+      sequential: []
+      auxiliary_model_wrapper:
+        key: &teacher4ft 'Teacher4FactorTransfer'
+        kwargs:
+          minimal:
+            auxiliary_model_wrapper:
+              key: 'HeadRCNN'
+              kwargs:
+                head_rcnn:
+                  sequential: ['backbone.body']
+          input_module_path: 'teacher_model.seq.backbone.body.layer4'
+          paraphraser_kwargs: &teacher4ft_paraphraser_kwargs
+            k: 0.25
+            num_input_channels: 2048
+            kernel_size: 3
+            stride: 1
+            padding: 1
+            uses_bn: True
+          paraphraser_ckpt: &teacher4ft_paraphraser_ckpt !join ['./resource/ckpt/coco2017/ft/', *student_experiment, '_paraphraser.pt']
+          uses_decoder: True
+      forward_hook:
+        input: []
+        output: ['teacher_model.seq.backbone.body.layer4', 'paraphraser']
+      wrapper:
+      requires_grad: True
+      frozen_modules: ['teacher_model']
+    student:
+      adaptations:
+      auxiliary_model_wrapper:
+        key: 'EmptyModule'
+        kwargs:
+      sequential: []
+      forward_hook:
+        input: []
+        output: []
+      wrapper:
+      requires_grad: False
+    optimizer:
+      key: 'SGD'
+      kwargs:
+        lr: 0.0001
+        momentum: 0.9
+        weight_decay: 0.0005
+    criterion:
+      key: 'WeightedSumLoss'
+      kwargs:
+        sub_terms:
+          reconst:
+            criterion:
+              key: 'MSELoss'
+              kwargs:
+                reduction: 'sum'
+            criterion_wrapper:
+              key: 'SimpleLossWrapper'
+              kwargs:
+                input:
+                  is_from_teacher: True
+                  module_path: 'paraphraser'
+                  io: 'output'
+                target:
+                  is_from_teacher: True
+                  module_path: 'teacher_model.seq.backbone.body.layer4'
+                  io: 'output'
+            weight: 1.0
+  stage2:
+    num_epochs: 19
+    teacher:
+      forward_proc: 'forward_batch_target'
+      sequential: []
+      auxiliary_model_wrapper:
+        key: *teacher4ft
+        kwargs:
+          minimal:
+          input_module_path: 'teacher_model.backbone.body.layer4'
+          paraphraser_kwargs: *teacher4ft_paraphraser_kwargs
+          paraphraser_ckpt: *teacher4ft_paraphraser_ckpt
+          uses_decoder: False
+      forward_hook:
+        input: []
+        output: ['teacher_model.backbone.body.layer4', 'paraphraser']
+      wrapper:
+      requires_grad: False
+    student:
+      forward_proc: 'forward_batch_target'
+      adaptations:
+      sequential: []
+      auxiliary_model_wrapper:
+        key: 'Student4FactorTransfer'
+        kwargs:
+          input_module_path: 'student_model.backbone.body.layer4'
+          translator_kwargs:
+            num_input_channels: 512
+            num_output_channels: 512
+            kernel_size: 3
+            stride: 1
+            padding: 1
+            uses_bn: True
+          find_unused_parameters: True
+      forward_hook:
+        input: []
+        output: ['student_model.backbone.body.layer4', 'translator']
+      wrapper:
+      requires_grad: True
+      frozen_modules: ['student_model.backbone.body.conv1', 'student_model.backbone.body.bn1', 'student_model.backbone.body.relu', 'student_model.backbone.body.maxpool']
+    optimizer:
+      key: 'SGD'
+      kwargs:
+        lr: 0.0001
+        momentum: 0.9
+        weight_decay: 0.0005
+    scheduler:
+      key: 'MultiStepLR'
+      kwargs:
+        milestones: [5, 10]
+        gamma: 0.1
+    criterion:
+      key: 'WeightedSumLoss'
+      func2extract_model_loss: 'extract_model_loss_dict'
+      kwargs:
+        model_term:
+          weight: 1.0
+        sub_terms:
+          factor_transfer:
+            criterion:
+              key: 'FTLoss'
+              kwargs:
+                p: 1
+                reduction: 'mean'
+                paraphraser_path: 'paraphraser'
+                translator_path: 'translator'
+            weight: 1000.0
+
+test:
+  test_data_loader:
+    dataset_id: *coco_val_dataset_id
+    sampler: *val_sampler
+    collate_fn: 'coco_collate_fn'
+    kwargs:
+      batch_size: 1
+      num_workers: 4
