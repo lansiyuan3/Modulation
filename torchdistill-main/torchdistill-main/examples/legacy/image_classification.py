@@ -4,7 +4,8 @@ import os
 import time
 
 import torch
-from torch import distributed as dist
+import torchvision
+from torch import distributed as dist, nn
 from torch.backends import cudnn
 from torch.nn import DataParallel
 from torch.nn.parallel import DistributedDataParallel
@@ -25,7 +26,9 @@ logger = def_logger.getChild(__name__)
 
 def get_argparser():
     parser = argparse.ArgumentParser(description='Knowledge distillation for image classification models')
-    parser.add_argument('--config', required=True, help='yaml file path')
+    parser.add_argument('--config', default=r"D:\torchdistill-0.3.3\torchdistill-main\torchdistill-main\configs"
+                                            r"\legacy\sample\ilsvrc2012\multi_stage\fsp\resnet18_from_resnet34.yaml"
+                        ,help='yaml file path')
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('--log', help='log file path')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='start epoch')
@@ -42,13 +45,13 @@ def get_argparser():
 
 
 def load_model(model_config, device, distributed):
-    model = get_image_classification_model(model_config, distributed)
-    if model is None:
-        repo_or_dir = model_config.get('repo_or_dir', None)
-        model = get_model(model_config['name'], repo_or_dir, **model_config['params'])
-
+    # model = get_image_classification_model(model_config, distributed)
+    # if model is None:
+    #     repo_or_dir = model_config.get('repo_or_dir', None)
+    #     model = get_model(model_config['name'], repo_or_dir, **model_config['params'])
+    #
     ckpt_file_path = model_config['ckpt']
-    load_ckpt(ckpt_file_path, model=model, strict=True)
+    model = load_ckpt(ckpt_file_path, model=None, strict=True)
     return model.to(device)
 
 
@@ -57,8 +60,9 @@ def train_one_epoch(training_box, device, epoch, log_freq):
     metric_logger.add_meter('lr', SmoothedValue(window_size=1, fmt='{value}'))
     metric_logger.add_meter('img/s', SmoothedValue(window_size=10, fmt='{value}'))
     header = 'Epoch: [{}]'.format(epoch)
-    for sample_batch, targets, supp_dict in \
+    for sample_batch, targets in \
             metric_logger.log_every(training_box.train_data_loader, log_freq, header):
+        supp_dict = {}
         start_time = time.time()
         sample_batch, targets = sample_batch.to(device), targets.to(device)
         loss = training_box(sample_batch, targets, supp_dict)
@@ -151,7 +155,7 @@ def main(args):
     set_seed(args.seed)
     config = yaml_util.load_yaml_file(os.path.expanduser(args.config))
     device = torch.device(args.device)
-    dataset_dict = util.get_all_datasets(config['datasets'])
+    dataset_dict = config['datasets']
     models_config = config['models']
     teacher_model_config = models_config.get('teacher_model', None)
     teacher_model =\
@@ -159,7 +163,13 @@ def main(args):
     student_model_config =\
         models_config['student_model'] if 'student_model' in models_config else models_config['model']
     ckpt_file_path = student_model_config['ckpt']
-    student_model = load_model(student_model_config, device, distributed)
+    # student_model = load_model(student_model_config, device, distributed)
+
+    # 加载ResNet18模型
+    student_model  = torchvision.models.resnet18(pretrained=True)
+    num_ftrs = student_model .fc.in_features
+    student_model .fc = nn.Linear(num_ftrs, 8)
+
     if args.log_config:
         logger.info(config)
 
