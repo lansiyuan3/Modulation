@@ -45,7 +45,7 @@ def get_argparser():
     return parser
 
 
-def load_model(model_config, device, distributed):
+def load_teacher_model(model_config, device, distributed):
     # model = get_image_classification_model(model_config, distributed)
     # if model is None:
     #     repo_or_dir = model_config.get('repo_or_dir', None)
@@ -54,6 +54,17 @@ def load_model(model_config, device, distributed):
     ckpt_file_path = model_config['ckpt']
     model = load_ckpt(ckpt_file_path, model=None, strict=True)
     return model.to(device)
+
+def load_student_model(model_config, device, distributed):
+    model = get_image_classification_model(model_config, distributed)
+    if model is None:
+        repo_or_dir = model_config.get('repo_or_dir', None)
+        model = get_model(model_config['name'], repo_or_dir, **model_config['params'])
+
+    ckpt_file_path = model_config['ckpt']
+    load_ckpt(ckpt_file_path, model=None, strict=True)
+    return model.to(device)
+
 
 
 def train_one_epoch(training_box, device, epoch, log_freq):
@@ -116,7 +127,8 @@ def train(teacher_model, student_model, dataset_dict, ckpt_file_path, device, de
         else get_distillation_box(teacher_model, student_model, dataset_dict, train_config,
                                   device, device_ids, distributed, lr_factor)
     best_val_top1_accuracy = 0.0
-    optimizer, lr_scheduler = training_box.optimizer, training_box.lr_scheduler
+    optimizer = training_box.optimizer
+    lr_scheduler = training_box.lr_scheduler
     if file_util.check_if_exists(ckpt_file_path):
         best_val_top1_accuracy, _, _ = load_ckpt(ckpt_file_path, optimizer=optimizer, lr_scheduler=lr_scheduler)
 
@@ -160,15 +172,11 @@ def main(args):
     models_config = config['models']
     teacher_model_config = models_config.get('teacher_model', None)
     teacher_model =\
-        load_model(teacher_model_config, device, distributed) if teacher_model_config is not None else None
+        load_teacher_model(teacher_model_config, device, distributed) if teacher_model_config is not None else None
     student_model_config =\
         models_config['student_model'] if 'student_model' in models_config else models_config['model']
     ckpt_file_path = student_model_config['ckpt']
-    # student_model = load_model(student_model_config, device, distributed)
-
-    # 加载ResNet18模型
-    student_model  = torchvision.models.resnet18(pretrained=True)
-    student_model .fc = nn.Linear(512, 8)
+    student_model = load_student_model(student_model_config, device, distributed)
 
     if args.log_config:
         logger.info(config)
