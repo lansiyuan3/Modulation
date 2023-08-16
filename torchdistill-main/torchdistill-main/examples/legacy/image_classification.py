@@ -4,7 +4,7 @@ import os
 import time
 
 import torch
-import torchvision
+from torch.utils.data import  DataLoader
 from torch import distributed as dist, nn
 from torch.backends import cudnn
 from torch.nn import DataParallel
@@ -16,6 +16,7 @@ from torchdistill.common.main_util import is_main_process, init_distributed_mode
 from torchdistill.core.distillation import get_distillation_box
 from torchdistill.core.training import get_training_box
 from torchdistill.datasets import util
+from torchdistill.datasets.registry import trian_dataset
 from torchdistill.eval.classification import compute_accuracy
 from torchdistill.misc.log import setup_log_file, SmoothedValue, MetricLogger
 from torchdistill.models.official import get_image_classification_model
@@ -31,7 +32,7 @@ def get_argparser():
                                             r"\resnet18_from_resnet34.yaml "
                         ,help='yaml file path')
     parser.add_argument('--device', default='cuda', help='device')
-    parser.add_argument('--log', help='log file path')
+    parser.add_argument('--log', default=r'.\ilsvrc2012\log\resnet18_from_resnet32.log',help='log file path')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='start epoch')
     parser.add_argument('--seed', type=int, help='seed in random number generator')
     parser.add_argument('-test_only', action='store_true', help='only test the models')
@@ -189,8 +190,8 @@ def main(args):
 
     test_config = config['test']
     test_data_loader_config = test_config['test_data_loader']
-    test_data_loader = util.build_data_loader(dataset_dict[test_data_loader_config['dataset_id']],
-                                              test_data_loader_config, distributed)
+    data_test = trian_dataset(data_dir='test')
+    test_data_loader = util.build_data_loader(data_test, test_data_loader_config, distributed)
     log_freq = test_config.get('log_freq', 1000)
     if not args.student_only and teacher_model is not None:
         evaluate(teacher_model, test_data_loader, device, device_ids, distributed, log_freq=log_freq,
